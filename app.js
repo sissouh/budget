@@ -18,8 +18,12 @@ const DEF = [
 const COL={Revenu:"#1f9d55","Épargne":"#2563eb",Fixe:"#7c3aed",Variable:"#e07b00"},PAL=["#0891b2","#db2777","#65a30d","#a16207","#475569","#0d9488"];
 const FREQ={mois:["par mois",1],semaine:["par semaine",52/12],"2mois":["tous les 2 mois",1/2],"3mois":["tous les 3 mois",1/3],an:["par an",1/12]};
 const MOIS=["Janvier","Février","Mars","Avril","Mai","Juin","Juillet","Août","Septembre","Octobre","Novembre","Décembre"];
-const nf=new Intl.NumberFormat("fr-FR",{maximumFractionDigits:0});
-const ar=n=>nf.format(Math.round(n||0))+" Ar";
+// séparateur de milliers : espace insécable normale (bien visible, ne coupe jamais un nombre)
+const NB="\u00a0";
+const grp=d=>d.replace(/\B(?=(\d{3})+(?!\d))/g,NB);
+const ar=n=>{const v=Math.round(n||0);return(v<0?"-":"")+grp(String(Math.abs(v)))+NB+"Ar"};
+// valeur affichée dans un champ de saisie : « 1418259 » → « 1 418 259 »
+const fi=v=>{const d=String(v??"").replace(/\D/g,"").replace(/^0+(?=\d)/,"");return d?grp(d):""};
 const esc=s=>String(s??"").replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
 const mensuel=p=>Math.round((+p.montant||0)*(FREQ[p.freq]||FREQ.mois)[1]/100)*100;
 const pad=n=>String(n).padStart(2,"0");
@@ -312,7 +316,7 @@ function vSaisir(){
  const f=S.form,cats=f.type==="Dépense"?S.groupes:[f.type];
  const chips=cats.map(c=>`${cats.length>1?`<div class="grp">${esc(c==="Fixe"?"Fixes":c==="Variable"?"Variables":c)}</div>`:""}<div class="chips">${S.postes.filter(p=>p.type===c).map(p=>`<button type="button" class="chip${f.poste===p.id?" on":""}" style="--c:${esc(col(c))}" data-p="${esc(p.id)}" aria-pressed="${f.poste===p.id}"><span class="sw" style="background:${esc(col(c))}"></span>${esc(p.nom)}</button>`).join("")}</div>`).join("");
  return`<h1>Noter un mouvement</h1><form id="fs">
- <label class="f" for="mt">Montant (Ar)</label><input id="mt" class="amount" inputmode="numeric" autocomplete="off" placeholder="0" value="${esc(f.montant||"")}">
+ <label class="f" for="mt">Montant (Ar)</label><input id="mt" class="amount" inputmode="numeric" autocomplete="off" placeholder="0" value="${esc(fi(f.montant))}">
  <div class="seg">${["Dépense","Revenu","Épargne"].map(t=>`<button type="button" data-t="${t}" class="${f.type===t?"on":""}">${t}</button>`).join("")}</div>
  ${chips}
  <label class="f">Date<input id="dt" type="date" value="${esc(f.date||today())}"></label>
@@ -352,16 +356,16 @@ function vReglages(){
  <label class="f">Nom<input id="a-nom" value="${esc(A.nom||"")}" placeholder="ex. Transport, Freelance…"></label>
  <label class="f">Type<select id="a-type">${tOpt}</select></label>
  ${A.type==="__new"?`<label class="f">Nom du nouveau groupe<input id="a-grp" value="${esc(A.grp||"")}" placeholder="ex. Transport, Santé"></label>`:""}
- <div class="duo"><label class="f">Montant (Ar)<input id="a-mt" inputmode="numeric" value="${esc(A.montant||"")}" placeholder="0"></label><label class="f">Fréquence<select id="a-fq">${opt(A.freq)}</select></label></div>
- ${A.type==="Épargne"?`<div class="duo"><label class="f">Objectif (Ar)<input id="a-obj" inputmode="numeric" value="${esc(A.objectif||"")}"></label><label class="f">% du surplus<input id="a-part" inputmode="numeric" value="${esc(A.part||"")}"></label></div>`:""}
+ <div class="duo"><label class="f">Montant (Ar)<input id="a-mt" inputmode="numeric" value="${esc(fi(A.montant))}" placeholder="0"></label><label class="f">Fréquence<select id="a-fq">${opt(A.freq)}</select></label></div>
+ ${A.type==="Épargne"?`<div class="duo"><label class="f">Objectif (Ar)<input id="a-obj" inputmode="numeric" value="${esc(fi(A.objectif))}"></label><label class="f">% du surplus<input id="a-part" inputmode="numeric" value="${esc(fi(A.part))}"></label></div>`:""}
  <button class="btn" id="addok">Ajouter</button></div>`;
  const grp=types().map(type=>`<div class="gh"><h2>${sw(type)}${esc(lab(type))}</h2><input type="color" data-col="${esc(type)}" value="${esc(col(type))}" aria-label="Couleur de ${esc(lab(type))}">${isDep(type)&&!S.postes.some(p=>p.type===type)?`<button class="del" data-rmg="${esc(type)}" aria-label="Supprimer ce groupe">×</button>`:""}</div>`+
   S.postes.filter(p=>p.type===type).map(p=>`<div class="set" data-id="${esc(p.id)}" style="--c:${esc(col(type))}">
    <div class="name"><label>Nom<input data-k="nom" value="${esc(p.nom)}"></label><button class="del" data-rm="${esc(p.id)}" aria-label="Supprimer ${esc(p.nom)}">×</button></div>
-   <div class="duo"><label>Montant (Ar)<input data-k="montant" inputmode="numeric" value="${esc(p.montant)}"></label><label>Fréquence<select data-k="freq">${opt(p.freq)}</select></label></div>
+   <div class="duo"><label>Montant (Ar)<input data-k="montant" inputmode="numeric" value="${esc(fi(p.montant))}"></label><label>Fréquence<select data-k="freq">${opt(p.freq)}</select></label></div>
    <div class="eq">= ${ar(mensuel(p))} par mois</div>
-   ${type==="Épargne"?`<div class="duo"><label>Objectif (Ar)<input data-k="objectif" inputmode="numeric" value="${esc(p.objectif||0)}"></label><label>% du surplus<input data-k="part" inputmode="numeric" value="${esc(p.part||0)}"></label></div>
-   <label>Déjà épargné avant l'app (Ar)<input data-k="depart" inputmode="numeric" value="${esc(p.depart||0)}"></label>`:""}</div>`).join("")+
+   ${type==="Épargne"?`<div class="duo"><label>Objectif (Ar)<input data-k="objectif" inputmode="numeric" value="${esc(fi(p.objectif||0))}"></label><label>% du surplus<input data-k="part" inputmode="numeric" value="${esc(fi(p.part||0))}"></label></div>
+   <label>Déjà épargné avant l'app (Ar)<input data-k="depart" inputmode="numeric" value="${esc(fi(p.depart||0))}"></label>`:""}</div>`).join("")+
   `<button class="btn ghost sm" data-new="${esc(type)}">+ Ajouter ${type==="Épargne"?"une poche":"un poste"}</button>`).join("");
  const sheet=L.sheetId?`<a class="btn ghost" href="https://docs.google.com/spreadsheets/d/${esc(L.sheetId)}/edit" target="_blank" rel="noopener">Ouvrir mon Google Sheets</a>`:"";
  const drive=!CLIENT_ID?`<p class="mute">L'app n'est pas encore reliée à Google (réglage <code>clientId</code> vide dans config.js) : tes données restent sur ce téléphone.</p>`
@@ -431,6 +435,10 @@ app.addEventListener("click",async e=>{
  if(el.id==="cp"){try{await navigator.clipboard.writeText(csv());toast("Lignes copiées : colle-les dans le Journal Excel")}catch(err){toast("Copie impossible sur cet appareil.")}return}
 });
 app.addEventListener("submit",e=>e.preventDefault());
+// formatage en direct des montants pendant la saisie, sans faire sauter le curseur
+app.addEventListener("input",e=>{const i=e.target;if(!i.matches||!i.matches("input[inputmode=numeric]"))return;
+ const pos=i.selectionStart??i.value.length,avant=i.value.slice(0,pos).replace(/\D/g,"").length,v=fi(i.value);if(v===i.value)return;
+ i.value=v;let n=0,k=0;while(k<v.length&&n<avant){if(/\d/.test(v[k]))n++;k++}try{i.setSelectionRange(k,k)}catch(err){}});
 app.addEventListener("change",e=>{if(e.target.matches(".set select")||e.target.id==="a-type"||e.target.id==="a-fq"){readSettings();readAdd();render()}if(e.target.dataset.col){readSettings();readAdd();S.couleurs={...S.couleurs,[e.target.dataset.col]:e.target.value};render();toast("Couleur changée (enregistre pour la garder)")}});
 window.addEventListener("hashchange",route);
 route();boot();

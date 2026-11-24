@@ -1,7 +1,7 @@
 /* Service worker : garde l'app sur le téléphone pour qu'elle s'ouvre sans Internet.
    Stratégie : on répond tout de suite avec la copie gardée, et on la met à jour en arrière-plan
    (la nouvelle version s'affiche à l'ouverture suivante). Change V à chaque mise à jour. */
-const V = "budget-v3";
+const V = "budget-v4";
 const FONTS = "budget-fonts";
 const SHELL = ["./", "./index.html", "./app.js", "./config.js", "./manifest.webmanifest", "./icon-192.png", "./icon-512.png", "./icon-maskable.png"];
 
