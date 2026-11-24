@@ -1,12 +1,13 @@
 /* Service worker : garde l'app sur le téléphone pour qu'elle s'ouvre sans Internet.
    Stratégie : on répond tout de suite avec la copie gardée, et on la met à jour en arrière-plan
    (la nouvelle version s'affiche à l'ouverture suivante). Change V à chaque mise à jour. */
-const V = "budget-v2";
+const V = "budget-v3";
 const FONTS = "budget-fonts";
 const SHELL = ["./", "./index.html", "./app.js", "./config.js", "./manifest.webmanifest", "./icon-192.png", "./icon-512.png", "./icon-maskable.png"];
 
 self.addEventListener("install", e => {
-  e.waitUntil(caches.open(V).then(c => c.addAll(SHELL)));
+  // cache:"reload" : on contourne le cache HTTP (10 min sur GitHub Pages) pour prendre la vraie nouvelle version
+  e.waitUntil(caches.open(V).then(c => c.addAll(SHELL.map(u => new Request(u, { cache: "reload" })))));
   self.skipWaiting();
 });
 
@@ -24,7 +25,7 @@ self.addEventListener("fetch", e => {
     e.respondWith(caches.open(V).then(async c => {
       const key = r.mode === "navigate" ? "./index.html" : r;
       const cached = await c.match(key, { ignoreSearch: true });
-      const net = fetch(r).then(res => { if (res.ok) c.put(key, res.clone()); return res; });
+      const net = fetch(r, { cache: "no-cache" }).then(res => { if (res.ok) c.put(key, res.clone()); return res; });
       if (cached) { e.waitUntil(net.catch(() => {})); return cached; }
       return net.catch(() => Response.error());
     }));
