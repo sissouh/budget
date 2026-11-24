@@ -366,7 +366,7 @@ function vReglages(){
    <div class="eq">= ${ar(mensuel(p))} par mois</div>
    ${type==="Épargne"?`<div class="duo"><label>Objectif (Ar)<input data-k="objectif" inputmode="numeric" value="${esc(fi(p.objectif||0))}"></label><label>% du surplus<input data-k="part" inputmode="numeric" value="${esc(fi(p.part||0))}"></label></div>
    <label>Déjà épargné avant l'app (Ar)<input data-k="depart" inputmode="numeric" value="${esc(fi(p.depart||0))}"></label>`:""}</div>`).join("")+
-  `<button class="btn ghost sm" data-new="${esc(type)}">+ Ajouter ${type==="Épargne"?"une poche":"un poste"}</button>`).join("");
+  `<div class="duo"><button class="btn ghost sm" data-new="${esc(type)}" aria-label="Ajouter ${type==="Épargne"?"une poche":"un poste"}">+ Ajouter</button><button class="btn sm" data-savecfg="${esc(type)}">Enregistrer</button></div>`).join("");
  const sheet=L.sheetId?`<a class="btn ghost" href="https://docs.google.com/spreadsheets/d/${esc(L.sheetId)}/edit" target="_blank" rel="noopener">Ouvrir mon Google Sheets</a>`:"";
  const drive=!CLIENT_ID?`<p class="mute">L'app n'est pas encore reliée à Google (réglage <code>clientId</code> vide dans config.js) : tes données restent sur ce téléphone.</p>`
   :L.email?`<p class="mute">Connecté à <b>${esc(L.email)}</b>. Tout est recopié dans le Google Sheets « ${esc(SHEET_NAME)} » de ton Drive dès qu'il y a du réseau.</p>${sheet}<button class="btn ghost" data-sync="1">Sauvegarder maintenant</button><button class="btn ghost" id="logout">Se déconnecter de Google</button>`
@@ -404,7 +404,7 @@ function csv(){const all=[...L.tx].sort((a,b)=>a.date.localeCompare(b.date));
 
 app.addEventListener("click",async e=>{
  const el=e.target.closest("button");if(!el)return;
- if(el.id==="save"||el.id==="savecfg"||el.id==="addok")relogIfNeeded();
+ if(el.id==="save"||el.id==="savecfg"||el.dataset.savecfg||el.id==="addok")relogIfNeeded();
  if(el.dataset.login){connect(!L.email);return}
  if(el.dataset.sync){if(!tokenOk()&&L.email){connect(false);return}sync();return}
  if(el.id==="logout"){logout();return}
@@ -431,7 +431,7 @@ app.addEventListener("click",async e=>{
   S.postes.push({id:"p"+uid(),type,nom,montant:parseAr(A.montant),freq:A.freq||"mois",...(type==="Épargne"?{objectif:parseAr(A.objectif),depart:0,part:parseAr(A.part)}:{})});
   S.add={type,freq:"mois"};await store.saveConfig(cfgNow());toast(`« ${nom} » ajouté`);render();return}
  if(el.dataset.rmg){readSettings();S.groupes=S.groupes.filter(g=>g!==el.dataset.rmg);render();toast("Groupe retiré (enregistre pour valider)");return}
- if(el.id==="savecfg"){readSettings();await store.saveConfig(cfgNow());toast("Budget enregistré");render();return}
+ if(el.id==="savecfg"||el.dataset.savecfg){readSettings();await store.saveConfig(cfgNow());toast(el.dataset.savecfg?`${lab(el.dataset.savecfg)} : enregistré`:"Budget enregistré");render();return}
  if(el.id==="cp"){try{await navigator.clipboard.writeText(csv());toast("Lignes copiées : colle-les dans le Journal Excel")}catch(err){toast("Copie impossible sur cet appareil.")}return}
 });
 app.addEventListener("submit",e=>e.preventDefault());
