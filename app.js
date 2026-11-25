@@ -31,20 +31,44 @@ const today=()=>{const d=new Date();return d.getFullYear()+"-"+pad(d.getMonth()+
 const parseAr=s=>Math.round(+String(s).replace(/[^\d,.-]/g,"").replace(",","."))||0;
 const uid=()=>Date.now().toString(36)+Math.random().toString(36).slice(2,7);
 const clone=o=>JSON.parse(JSON.stringify(o));
+// dates « AAAA-MM-JJ » : +n jours, mois voisin, dernier jour du mois, affichage court
+const addJ=(iso,n)=>{const[y,m,d]=iso.split("-").map(Number),t=new Date(Date.UTC(y,m-1,d+n));return t.getUTCFullYear()+"-"+pad(t.getUTCMonth()+1)+"-"+pad(t.getUTCDate())};
+const moisDec=(m,k)=>{let[y,mm]=m.split("-").map(Number);mm+=k;while(mm<1){mm+=12;y--}while(mm>12){mm-=12;y++}return y+"-"+pad(mm)};
+const finCal=m=>{const[y,mm]=m.split("-").map(Number);return m+"-"+pad(new Date(y,mm,0).getDate())};
+const fd=(iso,an)=>new Date(iso+"T12:00").toLocaleDateString("fr-FR",{day:"numeric",month:"short",...(an?{year:"numeric"}:{})});
+const MOTIFS=["Objectif atteint","Urgence","Autre"];
 const app=document.getElementById("app");
 const CLIENT_ID=((window.BUDGET_CONFIG||{}).clientId||"").trim();
 
 /* ================= état ================= */
 // L = ce qui est enregistré sur le téléphone ; S = état de l'écran
 let L=null;
-const S={postes:[],groupes:[],couleurs:{},add:{type:"Variable",freq:"mois"},mois:today().slice(0,7),vue:"mois",tx:[],ep:[],ready:false,form:{type:"Dépense",poste:null},sync:{state:"idle",msg:""}};
+const S={postes:[],groupes:[],couleurs:{},periodes:{},perEdit:false,perForm:null,add:{type:"Variable",freq:"mois"},mois:today().slice(0,7),vue:"mois",tx:[],ep:[],deb:[],ready:false,form:{type:"Dépense",poste:null},sync:{state:"idle",msg:""}};
 const P=id=>S.postes.find(p=>p.id===id);
 const isDep=t=>t!=="Revenu"&&t!=="Épargne";
 const col=t=>S.couleurs[t]||COL[t]||"#475569";
 const sw=t=>`<span class="sw" style="background:${esc(col(t))}"></span>`;
 const types=()=>["Revenu","Épargne",...S.groupes];
 const lab=t=>t==="Revenu"?"Revenus":t==="Épargne"?"Poches d'épargne":t==="Fixe"?"Dépenses fixes":t==="Variable"?"Dépenses variables":"Dépenses – "+t;
-function applyCfg(){S.postes=clone(L.cfg.postes);S.groupes=[...L.cfg.groupes];S.couleurs={...L.cfg.couleurs}}
+function applyCfg(){S.postes=clone(L.cfg.postes);S.groupes=[...L.cfg.groupes];S.couleurs={...L.cfg.couleurs};S.periodes=clone(L.cfg.periodes||{})}
+
+/* ================= périodes de budget (de paie à paie) =================
+   Un « mois » de budget peut avoir ses propres dates : ex. Décembre = du 26 nov. au 24 déc.,
+   car la paie reçue fin novembre finance décembre. Sans dates, c'est le mois calendaire,
+   raccourci si un mois voisin a des dates qui empiètent dessus. */
+function periode(m){
+ const s=S.periodes[m];if(s)return{d:s.d,f:s.f,perso:true};
+ let d=m+"-01",f=finCal(m);const a=S.periodes[moisDec(m,-1)],b=S.periodes[moisDec(m,1)];
+ if(a&&a.f>=d)d=addJ(a.f,1);if(b&&b.d<=f)f=addJ(b.d,-1);
+ return{d,f,perso:false};
+}
+// à quel mois de budget appartient une date
+function moisDe(date){
+ for(const[m,p]of Object.entries(S.periodes))if(date>=p.d&&date<=p.f)return m;
+ const m=date.slice(0,7),p=S.periodes[m];
+ if(p)return date>p.f?moisDec(m,1):moisDec(m,-1);
+ return m;
+}
 
 /* ================= stockage sur le téléphone (IndexedDB) ================= */
 const idb={
@@ -56,7 +80,7 @@ const idb={
 async function persist(){try{await idb.set("etat",L)}catch(e){toast("Impossible d'enregistrer sur le téléphone : "+(e.message||e))}}
 
 const store={
- emit(){S.tx=L.tx.filter(t=>t.mois===S.mois);S.ep=L.tx.filter(t=>t.type==="Épargne");render()},
+ emit(){L.tx.forEach(t=>t.mois=moisDe(t.date));S.tx=L.tx.filter(t=>t.mois===S.mois);S.ep=L.tx.filter(t=>t.type==="Épargne");S.deb=L.tx.filter(t=>t.type==="Déblocage");render()},
  async add(t){L.tx.push(t);delete L.del[t.id];L.pending++;await persist();this.emit();syncSoon()},
  async del(id){L.tx=L.tx.filter(x=>x.id!==id);L.del[id]=Date.now();L.pending++;await persist();this.emit();syncSoon()},
  async saveConfig(c){L.cfg=clone(c);L.cfgTs=Date.now();L.pending++;await persist();syncSoon()}
@@ -67,7 +91,7 @@ async function boot(){
  if(!L)L={tx:[],del:{},cfg:{postes:DEF,groupes:["Fixe","Variable"],couleurs:{}},cfgTs:0,pending:0,sheetId:null,email:null,lastSync:0};
  try{navigator.storage&&navigator.storage.persist&&navigator.storage.persist()}catch(e){}
  try{const t=JSON.parse(localStorage.getItem("gtok")||"null");if(t&&t.e>Date.now()){G.token=t.t;G.exp=t.e}}catch(e){}
- applyCfg();S.ready=true;store.emit();syncSoon(300);
+ applyCfg();S.mois=moisDe(today());S.ready=true;store.emit();syncSoon(300);
 }
 
 /* ================= Google : connexion ================= */
@@ -126,13 +150,13 @@ async function api(url,opt={}){
 const SH="https://sheets.googleapis.com/v4/spreadsheets";
 const SHEET_NAME="Mon budget Ar — données";
 const TABS=[
- ["Journal",["Date","Poste","Type","Montant (Ar)","Note","Mois","ID","ID poste","Horodatage"]],
+ ["Journal",["Date","Poste","Type","Montant (Ar)","Note","Mois","ID","ID poste","Horodatage","Motif du déblocage","Compté dans le mois"]],
  ["Postes",["ID","Type","Nom","Montant","Fréquence","Objectif","Déjà épargné","% du surplus"]],
  ["Groupes",["Groupe","Couleur"]],
  ["Supprimés",["ID","Supprimé le (horodatage)"]],
  ["Réglages",["Clé","Valeur"]]
 ];
-const COLS={Journal:"I",Postes:"H",Groupes:"B",Supprimés:"B",Réglages:"B"};
+const COLS={Journal:"K",Postes:"H",Groupes:"B",Supprimés:"B",Réglages:"B"};
 const serial=iso=>{const[y,m,d]=iso.split("-").map(Number);return Date.UTC(y,m-1,d)/864e5+25569};
 function toISO(v){
  if(typeof v==="number"&&v>0){const d=new Date(Math.round((v-25569)*864e5));return d.getUTCFullYear()+"-"+pad(d.getUTCMonth()+1)+"-"+pad(d.getUTCDate())}
@@ -171,10 +195,14 @@ function readRemote(vr){
   if(!pid){const p=byName[String(r[1]||"").toLowerCase()];if(!p)return;pid=p.id;fix=true}
   if(!type){type=(byId[pid]||{}).type||"Variable";fix=true}
   let id=String(r[6]||"");if(!id){id=uid();fix=true}
-  tx.push({id,date,mois:date.slice(0,7),poste:pid,type,montant:m,note:String(r[4]||""),ts:+r[8]||0})});
+  const t={id,date,mois:date.slice(0,7),poste:pid,type,montant:m,note:String(r[4]||""),ts:+r[8]||0};
+  if(type==="Déblocage"){t.motif=String(r[9]||"Autre");t.hors=String(r[10]||"")==="Non"}
+  tx.push(t)});
  const del={};vd.forEach(r=>{if(r[0])del[String(r[0])]=+r[1]||1});
- const reg={};vs.forEach(r=>{if(r[0])reg[String(r[0])]=r[1]});
- return{postes,groupes,couleurs,tx,del,cfgTs:+reg.configTs||0,fix};
+ const reg={},periodes={};vs.forEach(r=>{if(!r[0])return;const k=String(r[0]);reg[k]=r[1];
+  const pm=k.match(/^Période (\d{4}-\d{2})$/),pv=String(r[1]||"").match(/(\d{4}-\d{2}-\d{2}).*?(\d{4}-\d{2}-\d{2})/);
+  if(pm&&pv)periodes[pm[1]]={d:pv[1],f:pv[2]}});
+ return{postes,groupes,couleurs,periodes,tx,del,cfgTs:+reg.configTs||0,fix};
 }
 let syncing=false,again=false,timer=null;
 function syncSoon(ms=1500){clearTimeout(timer);timer=setTimeout(()=>sync().catch(()=>{}),ms);renderSync()}
@@ -196,7 +224,7 @@ async function sync(){
   const merged=[...map.values()].filter(t=>!del[t.id]);
   const remoteIds=new Set(R.tx.map(t=>t.id));
   let cfgChanged=false;
-  if(R.postes.length&&R.cfgTs>L.cfgTs){L.cfg={postes:R.postes,groupes:R.groupes.length?R.groupes:L.cfg.groupes,couleurs:R.couleurs};L.cfgTs=R.cfgTs;cfgChanged=true}
+  if(R.postes.length&&R.cfgTs>L.cfgTs){L.cfg={postes:R.postes,groupes:R.groupes.length?R.groupes:L.cfg.groupes,couleurs:R.couleurs,periodes:R.periodes};L.cfgTs=R.cfgTs;cfgChanged=true}
   const needWrite=L.pending>0||R.fix||!R.postes.length||L.cfgTs>R.cfgTs||merged.length!==R.tx.length||merged.some(t=>!remoteIds.has(t.id))||Object.keys(del).length!==Object.keys(R.del).length;
   L.tx=merged;L.del=del;
   if(cfgChanged)applyCfg();
@@ -211,13 +239,15 @@ async function sync(){
 async function writeAll(id){
  const name={};L.cfg.postes.forEach(p=>name[p.id]=p.nom);
  const rows={
-  Journal:[...L.tx].sort((a,b)=>(a.date+(a.ts||0)).localeCompare(b.date+(b.ts||0))).map(t=>[serial(t.date),name[t.poste]||"Poste supprimé",t.type,+t.montant||0,t.note||"",t.mois,t.id,t.poste,t.ts||0]),
+  Journal:[...L.tx].sort((a,b)=>(a.date+(a.ts||0)).localeCompare(b.date+(b.ts||0))).map(t=>[serial(t.date),name[t.poste]||"Poste supprimé",t.type,+t.montant||0,t.note||"",t.mois,t.id,t.poste,t.ts||0,...(t.type==="Déblocage"?[t.motif||"Autre",t.hors?"Non":"Oui"]:["",""])]),
   Postes:L.cfg.postes.map(p=>{const e=p.type==="Épargne";return[p.id,p.type,p.nom,+p.montant||0,p.freq||"mois",e?+p.objectif||0:"",e?+p.depart||0:"",e?+p.part||0:""]}),
   Groupes:[...L.cfg.groupes.map(g=>[g,L.cfg.couleurs[g]||""]),...["Revenu","Épargne"].filter(k=>L.cfg.couleurs[k]).map(k=>[k,L.cfg.couleurs[k]])],
   Supprimés:Object.entries(L.del).map(([k,v])=>[k,v]),
-  Réglages:[["configTs",L.cfgTs],["Dernière sauvegarde",new Date().toLocaleString("fr-FR")]]
+  Réglages:[["configTs",L.cfgTs],["Dernière sauvegarde",new Date().toLocaleString("fr-FR")],...Object.entries(L.cfg.periodes||{}).sort().map(([m,p])=>["Période "+m,p.d+" au "+p.f])]
  };
  const data=Object.entries(rows).filter(([,v])=>v.length).map(([t,v])=>({range:`${t}!A2`,values:v}));
+ // en-têtes des colonnes ajoutées après coup (Sheets créés avant les déblocages)
+ data.push({range:"Journal!J1",values:[TABS[0][1].slice(9)]});
  if(data.length)await api(`${SH}/${id}/values:batchUpdate`,{method:"POST",body:JSON.stringify({valueInputOption:"RAW",data})});
  // efface les anciennes lignes en trop sous les données
  await api(`${SH}/${id}/values:batchClear`,{method:"POST",body:JSON.stringify({ranges:Object.entries(rows).map(([t,v])=>`${t}!A${v.length+2}:${COLS[t]}`)})});
@@ -244,16 +274,33 @@ function renderSync(){const el=document.getElementById("sync");if(el&&L)el.outer
 
 /* ================= calculs ================= */
 function bilan(){
- const reel={};for(const t of S.tx)reel[t.poste]=(reel[t.poste]||0)+(+t.montant||0);
+ const reel={};for(const t of S.tx)if(t.type!=="Déblocage")reel[t.poste]=(reel[t.poste]||0)+(+t.montant||0);
  const sum=(type,f)=>S.postes.filter(p=>p.type===type).reduce((a,p)=>a+f(p),0);
  const R=t=>S.tx.filter(x=>x.type===t).reduce((a,x)=>a+(+x.montant||0),0);
  const rev=R("Revenu"),ep=R("Épargne"),dep=S.groupes.reduce((a,g)=>a+R(g),0);
- return{reel,rev,ep,dep,reste:rev-ep-dep,pRev:sum("Revenu",mensuel),pEp:sum("Épargne",mensuel),pDep:S.groupes.reduce((a,g)=>a+sum(g,mensuel),0)};
+ // déblocages d'épargne (exceptions) : seuls ceux « comptés dans le mois » entrent dans le reste
+ const D=h=>S.tx.filter(x=>x.type==="Déblocage"&&!!x.hors===h).reduce((a,x)=>a+(+x.montant||0),0);
+ const deb=D(false),debH=D(true);
+ return{reel,rev,ep,dep,deb,debH,reste:rev+deb-ep-dep,pRev:sum("Revenu",mensuel),pEp:sum("Épargne",mensuel),pDep:S.groupes.reduce((a,g)=>a+sum(g,mensuel),0)};
 }
 const poches=()=>S.postes.filter(p=>p.type==="Épargne");
-const solde=p=>(+p.depart||0)+S.ep.filter(t=>t.poste===p.id).reduce((a,t)=>a+(+t.montant||0),0);
+const somme=l=>l.reduce((a,t)=>a+(+t.montant||0),0);
+const debloque=p=>somme(S.deb.filter(t=>t.poste===p.id));
+const solde=p=>(+p.depart||0)+somme(S.ep.filter(t=>t.poste===p.id))-debloque(p);
 const moisLabel=m=>MOIS[+m.slice(5)-1]+" "+m.slice(0,4);
-function shiftMois(d){let[y,m]=S.mois.split("-").map(Number);m+=d;if(m<1){m=12;y--}if(m>12){m=1;y++}S.mois=y+"-"+pad(m);store.emit()}
+function shiftMois(d){S.mois=moisDec(S.mois,d);S.perEdit=false;store.emit()}
+// bandeau « Du 26 nov. au 24 déc. » + formulaire des dates de la période
+function vPeriode(){
+ const m=S.mois,p=periode(m),y=m.slice(0,4),an=p.d.slice(0,4)!==y||p.f.slice(0,4)!==y;
+ if(!S.perEdit)return`<div class="per"><span>Du <b>${fd(p.d,an)}</b> au <b>${fd(p.f,an)}</b>${p.perso?"":" · mois calendaire"}</span><button data-per="1">${p.perso?"Modifier les dates":"Dates de paie"}</button></div>`;
+ const prev=S.periodes[moisDec(m,-1)];
+ const v=S.perForm||{d:p.perso?p.d:prev?addJ(prev.f,1):moisDec(m,-1)+"-25",f:p.perso?p.f:m+"-24"};
+ return`<div class="card per-f"><b>Période du budget de ${esc(moisLabel(m))}</b>
+ <p class="mute" style="margin:6px 0 0">Ta paie arrive entre le 24 et le 30 et sert au mois suivant : commence la période le jour où tu reçois la paie, termine-la la veille de la paie suivante.</p>
+ <div class="duo"><label class="f">Début (jour de paie)<input id="pd" type="date" value="${esc(v.d)}"></label><label class="f">Fin<input id="pf" type="date" value="${esc(v.f)}"></label></div>
+ <button class="btn sm" id="persave">Enregistrer la période</button>
+ <div class="duo"><button class="btn ghost sm" data-perno="1">Annuler</button>${p.perso?`<button class="btn ghost sm" data-perdel="1">Mois calendaire</button>`:""}</div></div>`;
+}
 function shiftAn(d){S.mois=(+S.mois.slice(0,4)+d)+S.mois.slice(4);store.emit()}
 function statut(type,r,pv){
  if(type==="Revenu")return r===0?(pv?"En attente":""):r>=pv?"✓ Reçu":"Partiel · manque "+ar(pv-r);
@@ -264,11 +311,11 @@ function statut(type,r,pv){
 }
 function bilanAn(y){
  const tx=L.tx.filter(t=>t.mois.slice(0,4)===y),reel={};
- for(const t of tx)reel[t.poste]=(reel[t.poste]||0)+(+t.montant||0);
+ for(const t of tx)if(t.type!=="Déblocage")reel[t.poste]=(reel[t.poste]||0)+(+t.montant||0);
  const months=MOIS.map((nom,i)=>{const m=y+"-"+pad(i+1),l=tx.filter(t=>t.mois===m);
   const R=f=>l.filter(f).reduce((a,x)=>a+(+x.montant||0),0);
-  const rev=R(t=>t.type==="Revenu"),ep=R(t=>t.type==="Épargne"),dep=R(t=>S.groupes.includes(t.type));
-  return{m,nom,rev,ep,dep,reste:rev-ep-dep,n:l.length}});
+  const rev=R(t=>t.type==="Revenu"),ep=R(t=>t.type==="Épargne"),dep=R(t=>S.groupes.includes(t.type)),deb=R(t=>t.type==="Déblocage"&&!t.hors);
+  return{m,nom,rev,ep,dep,deb,reste:rev+deb-ep-dep,n:l.length}});
  return{months,reel};
 }
 const stat=(t,label,v,sub)=>`<div class="stat"><span class="k">${sw(t)}${label}</span><b>${ar(v)}</b>${sub!==undefined?`<small>prévu ${ar(sub)}</small>`:""}</div>`;
@@ -284,22 +331,23 @@ function vAccueil(){
    return`<button class="row${over?" over":""}" style="--c:${esc(col(type))}" data-add="${esc(p.id)}"><div class="l"><span class="n">${esc(p.nom)}</span><span class="v">${ar(r)}<small>/ ${ar(pv)}</small></span></div><div class="bar"><i style="width:${pct}%;background:${esc(col(type))}"></i></div>${st?`<div class="st">${esc(st)}</div>`:""}</button>`}).join("");
   return rows?`<h2>${sw(type)}${esc(lab(type))}</h2>${rows}`:""}).join("");
  const split=b.reste>0?poches().map(p=>`${esc(p.nom)} : <b>${ar(b.reste*(+p.part||0)/100)}</b>`).join(" · "):"";
+ const excep=b.deb||b.debH?`<div class="excep"><b>Exception :</b> ${[b.deb?`${ar(b.deb)} débloqué de l'épargne, compté dans le reste`:"",b.debH?`${ar(b.debH)} débloqué hors budget`:""].filter(Boolean).join(" · ")}</div>`:"";
  return`${segVue()}<div class="top"><button class="iconbtn" data-m="-1" aria-label="Mois précédent">‹</button><h1>${moisLabel(S.mois)}</h1><button class="iconbtn" data-m="1" aria-label="Mois suivant">›</button></div>
- <section class="hero${neg?" neg":""}"><div class="mute">${neg?"Dépassement ce mois-ci":"Reste du mois → à virer sur l'épargne"}</div>
+ ${vPeriode()}<section class="hero${neg?" neg":""}"><div class="mute">${neg?"Dépassement ce mois-ci":"Reste du mois → à virer sur l'épargne"}</div>
  <div class="big">${ar(Math.abs(b.reste))}</div>
  <div class="mute">${neg?"À rattraper le mois prochain sur les variables, sans toucher à l'épargne.":b.reste>0?split:"Note tes revenus et dépenses pour voir ton reste."}</div>
- <div class="stats">${stat("Revenu","Revenus",b.rev,b.pRev)}${stat("Variable","Dépenses",b.dep,b.pDep)}${stat("Épargne","Épargne",b.ep,b.pEp)}</div>
+ <div class="stats">${stat("Revenu","Revenus",b.rev,b.pRev)}${stat("Variable","Dépenses",b.dep,b.pDep)}${stat("Épargne","Épargne",b.ep,b.pEp)}</div>${excep}
  ${b.reste>0?`<button class="btn" id="virer">J'ai viré le surplus sur mes poches</button>`:""}</section>${groups}`;
 }
 function vAnnee(){
- const y=S.mois.slice(0,4),{months,reel}=bilanAn(y),cur=today().slice(0,7);
+ const y=S.mois.slice(0,4),{months,reel}=bilanAn(y),cur=moisDe(today());
  const tot=k=>months.reduce((a,x)=>a+x[k],0);
  const surplus=months.reduce((a,x)=>a+Math.max(0,x.reste),0),depass=months.reduce((a,x)=>a+Math.max(0,-x.reste),0);
  const max=Math.max(1,...months.map(x=>Math.abs(x.reste)));
  const nb=y<cur.slice(0,4)?12:y>cur.slice(0,4)?0:+cur.slice(5);
  const mrows=months.map(x=>{const vide=!x.n,neg=x.reste<0,pct=Math.abs(x.reste)/max*100;
   return`<button class="row${neg?" over":""}" style="--c:${esc(neg?"var(--red)":col("Épargne"))}" data-goto="${x.m}"${vide&&x.m>cur?" disabled":""}><div class="l"><span class="n">${x.nom}</span><span class="v${neg?" neg":""}">${vide?"—":(neg?"−":"+")+ar(Math.abs(x.reste))}</span></div>
-  ${vide?"":`<div class="bar"><i style="width:${pct}%;background:${neg?"var(--red)":esc(col("Épargne"))}"></i></div><div class="st">Revenus ${ar(x.rev)} · Dépenses ${ar(x.dep)} · Épargne ${ar(x.ep)}</div>`}</button>`}).join("");
+  ${vide?"":`<div class="bar"><i style="width:${pct}%;background:${neg?"var(--red)":esc(col("Épargne"))}"></i></div><div class="st">Revenus ${ar(x.rev)} · Dépenses ${ar(x.dep)} · Épargne ${ar(x.ep)}${x.deb?` · Débloqué ${ar(x.deb)}`:""}</div>`}</button>`}).join("");
  const groups=types().map(type=>{
   const rows=S.postes.filter(p=>p.type===type).map(p=>{
    const pv=mensuel(p)*nb,r=reel[p.id]||0,over=isDep(type)&&r>pv,pct=pv?Math.min(100,r/pv*100):(r?100:0),ecart=isDep(type)?pv-r:r-pv;
@@ -326,24 +374,37 @@ function vSaisir(){
 function vHisto(){
  const list=[...S.tx].sort((a,b)=>(b.date+(b.ts||0)).localeCompare(a.date+(a.ts||0)));
  let last="";const rows=list.map(t=>{const p=P(t.poste),h=t.date!==last?`<div class="grp">${esc(new Date(t.date+"T12:00").toLocaleDateString("fr-FR",{weekday:"long",day:"numeric",month:"long"}))}</div>`:"";last=t.date;
-  const sign=t.type==="Revenu"?"+":t.type==="Épargne"?"→ ":"−";
-  return h+`<div class="tx" style="--c:${esc(col(t.type))}"><div class="d">${esc(p?p.nom:"Poste supprimé")}<small>${esc(t.note||t.type)}</small></div><div class="m" style="color:${t.type==="Revenu"||t.type==="Épargne"?esc(col(t.type)):"inherit"}">${sign}${ar(t.montant)}</div><button class="del" data-del="${esc(t.id)}" aria-label="Supprimer">×</button></div>`}).join("");
- return`<div class="top"><button class="iconbtn" data-m="-1" aria-label="Mois précédent">‹</button><h1>${moisLabel(S.mois)}</h1><button class="iconbtn" data-m="1" aria-label="Mois suivant">›</button></div>${rows||`<div class="empty">Rien de noté ce mois-ci.<br>Appuie sur le + jaune pour commencer.</div>`}`;
+  const db=t.type==="Déblocage",c=db?"#e07b00":col(t.type);
+  const sign=t.type==="Revenu"?"+":t.type==="Épargne"?"→ ":db?"← ":"−";
+  const sous=db?`Déblocage · ${t.motif||"Autre"}${t.note?" — "+t.note:""}${t.hors?" · hors budget":""}`:t.note||t.type;
+  return h+`<div class="tx" style="--c:${esc(c)}"><div class="d">${esc(p?p.nom:"Poste supprimé")}<small>${esc(sous)}</small></div><div class="m" style="color:${t.type==="Revenu"||t.type==="Épargne"||db?esc(c):"inherit"}">${sign}${ar(t.montant)}</div><button class="del" data-del="${esc(t.id)}" aria-label="Supprimer">×</button></div>`}).join("");
+ return`<div class="top"><button class="iconbtn" data-m="-1" aria-label="Mois précédent">‹</button><h1>${moisLabel(S.mois)}</h1><button class="iconbtn" data-m="1" aria-label="Mois suivant">›</button></div>${vPeriode()}${rows||`<div class="empty">Rien de noté ce mois-ci.<br>Appuie sur le + jaune pour commencer.</div>`}`;
 }
 function vEpargne(){
  const ps=poches(),tot=ps.reduce((a,p)=>a+solde(p),0),obj=ps.reduce((a,p)=>a+(+p.objectif||0),0);
- const cards=ps.map(p=>{const s=solde(p),o=+p.objectif||0,pct=o?Math.min(100,s/o*100):0;
-  return`<div class="card"><div class="l"><b>${esc(p.nom)}</b><span class="mute">${Math.round(pct)} %</span></div><div class="big">${ar(s)}</div><div class="bar"><i style="width:${pct}%;background:${esc(col("Épargne"))}"></i></div><div class="mute" style="margin-top:8px">Objectif ${ar(o)} · reste ${ar(Math.max(0,o-s))}<br>${ar(mensuel(p))}/mois · ${+p.part||0} % du surplus</div></div>`}).join("");
- return`<h1>Mon épargne</h1><p class="mute">On y met, on n'y touche plus : aucun retrait possible ici, c'est voulu.</p>
- <div class="card dark"><div>Total épargné</div><div class="big">${ar(tot)}</div><div style="opacity:.7;font-size:14px">sur un objectif de ${ar(obj)}</div></div>${cards}${histoEp()}`;
+ const cards=ps.map(p=>{const s=solde(p),o=+p.objectif||0,pct=o?Math.min(100,Math.max(0,s)/o*100):0,db=debloque(p);
+  return`<div class="card"><div class="l"><b>${esc(p.nom)}</b><span class="mute">${Math.round(pct)} %</span></div><div class="big">${ar(s)}</div><div class="bar"><i style="width:${pct}%;background:${esc(col("Épargne"))}"></i></div><div class="mute" style="margin-top:8px">Objectif ${ar(o)} · reste ${ar(Math.max(0,o-s))}<br>${ar(mensuel(p))}/mois · ${+p.part||0} % du surplus${db?`<br>Déjà débloqué : ${ar(db)}`:""}</div></div>`}).join("");
+ return`<h1>Mon épargne</h1><p class="mute">On y met, on n'y touche plus. Seule sortie possible : un déblocage exceptionnel et justifié, en bas de page.</p>
+ <div class="card dark"><div>Total épargné</div><div class="big">${ar(tot)}</div><div style="opacity:.7;font-size:14px">sur un objectif de ${ar(obj)}</div></div>${cards}${histoEp()}${vDeblocages()}`;
+}
+// déblocages de fonds : hors des saisies ordinaires, une exception avec un motif
+function vDeblocages(){
+ const list=[...S.deb].sort((a,b)=>(b.date+(b.ts||0)).localeCompare(a.date+(a.ts||0)));
+ const rows=list.map(t=>{const p=P(t.poste);
+  return`<div class="tx" style="--c:#e07b00"><div class="d">${esc(p?p.nom:"Poche supprimée")} · ${esc(t.motif||"Autre")}<small>${esc(fd(t.date,true))}${t.note?" — "+esc(t.note):""} · ${t.hors?"hors budget":"compté dans "+esc(moisLabel(t.mois))}</small></div><div class="m" style="color:#e07b00">−${ar(t.montant)}</div><button class="del" data-del="${esc(t.id)}" aria-label="Annuler ce déblocage">×</button></div>`}).join("");
+ const dispo=poches().some(p=>solde(p)>0);
+ return`<h2 style="margin-top:34px">Déblocages · exceptions</h2>
+ <div class="alloc"><div class="mute">Pour sortir de l'argent d'une poche uniquement en cas d'exception : objectif atteint, urgence… Chaque déblocage est noté avec son motif.</div>
+ <button class="btn ghost" id="debl"${dispo?"":" disabled"}>Débloquer des fonds…</button></div>
+ ${rows||`<div class="empty" style="padding:16px 10px">Aucun déblocage : bravo, l'épargne est intacte.</div>`}`;
 }
 function histoEp(){
  const y=S.mois.slice(0,4),ps=poches();
- let cumul=ps.reduce((a,p)=>a+(+p.depart||0),0)+S.ep.filter(t=>t.mois.slice(0,4)<y).reduce((a,t)=>a+(+t.montant||0),0);
- const rows=MOIS.map((nom,i)=>{const m=y+"-"+pad(i+1),l=S.ep.filter(t=>t.mois===m);if(!l.length)return"";
-  const v=l.reduce((a,t)=>a+(+t.montant||0),0);cumul+=v;
-  const det=ps.map(p=>{const s=l.filter(t=>t.poste===p.id).reduce((a,t)=>a+(+t.montant||0),0);return s?`${esc(p.nom)} ${ar(s)}`:""}).filter(Boolean).join(" · ");
-  return`<div class="tx nodel" style="--c:${esc(col("Épargne"))}"><div class="d">${nom}<small>${det}</small></div><div class="m" style="color:${esc(col("Épargne"))}">+${ar(v)}<small>solde ${ar(cumul)}</small></div></div>`}).join("");
+ let cumul=ps.reduce((a,p)=>a+(+p.depart||0),0)+somme(S.ep.filter(t=>t.mois.slice(0,4)<y))-somme(S.deb.filter(t=>t.mois.slice(0,4)<y));
+ const rows=MOIS.map((nom,i)=>{const m=y+"-"+pad(i+1),l=S.ep.filter(t=>t.mois===m),ld=S.deb.filter(t=>t.mois===m);if(!l.length&&!ld.length)return"";
+  const v=somme(l),d=somme(ld);cumul+=v-d;
+  const det=ps.map(p=>{const s=somme(l.filter(t=>t.poste===p.id));return s?`${esc(p.nom)} ${ar(s)}`:""}).filter(Boolean).join(" · ");
+  return`<div class="tx nodel" style="--c:${esc(col("Épargne"))}"><div class="d">${nom}<small>${det}${d?`${det?" · ":""}<span style="color:#e07b00">débloqué ${ar(d)}</span>`:""}</small></div><div class="m" style="color:${esc(col("Épargne"))}">${v?"+"+ar(v):"—"}<small>solde ${ar(cumul)}</small></div></div>`}).join("");
  return`<div class="top" style="margin:28px 0 6px"><button class="iconbtn" data-y="-1" aria-label="Année précédente">‹</button><h2>Versements ${y}</h2><button class="iconbtn" data-y="1" aria-label="Année suivante">›</button></div>${rows||`<div class="empty" style="padding:20px 10px">Aucun versement noté en ${y}.</div>`}`;
 }
 function vReglages(){
@@ -388,6 +449,7 @@ function render(){
  const scroll=view==="saisir"?null:window.scrollY;
  const keep=view==="saisir"?{m:document.getElementById("mt")?.value,d:document.getElementById("dt")?.value,n:document.getElementById("nt")?.value}:null;
  if(keep&&keep.m!==undefined){S.form.montant=keep.m;S.form.date=keep.d;S.form.note=keep.n}
+ if(S.perEdit&&document.getElementById("pd"))S.perForm={d:document.getElementById("pd").value,f:document.getElementById("pf").value};
  const body=({accueil:vAccueil,saisir:vSaisir,historique:vHisto,epargne:vEpargne,reglages:vReglages}[view]||vAccueil)();
  app.innerHTML=syncHTML().replace('<div class="sync','<div id="sync" class="sync')+body;
  document.querySelectorAll("nav a").forEach(a=>{const on=a.dataset.v===view;a.classList.toggle("on",on);on?a.setAttribute("aria-current","page"):a.removeAttribute("aria-current")});
@@ -395,10 +457,10 @@ function render(){
 }
 function route(){const h=location.hash.slice(1);view=["accueil","saisir","historique","epargne","reglages"].includes(h)?h:"accueil";if(view==="saisir"&&!S.form.date)S.form.date=today();render();if(view==="saisir")setTimeout(()=>document.getElementById("mt")?.focus(),50)}
 let tt;function toast(msg,undo){document.querySelector(".toast")?.remove();clearTimeout(tt);const d=document.createElement("div");d.className="toast";d.setAttribute("role","status");const s=document.createElement("span");s.textContent=msg;d.append(s);if(undo){const b=document.createElement("button");b.textContent="Annuler";b.onclick=()=>{d.remove();undo()};d.append(b)}document.body.append(d);tt=setTimeout(()=>d.remove(),5000)}
-async function addTx(posteId,montant,date,note){const p=P(posteId);const t={id:uid(),date,mois:date.slice(0,7),poste:posteId,type:p.type,montant,note:note||"",ts:Date.now()};await store.add(t);return t}
+async function addTx(posteId,montant,date,note){const p=P(posteId);const t={id:uid(),date,mois:moisDe(date),poste:posteId,type:p.type,montant,note:note||"",ts:Date.now()};await store.add(t);return t}
 function readAdd(){const v=id=>document.getElementById(id)?.value;const A=S.add;if(!document.getElementById("a-nom"))return;A.nom=v("a-nom");A.type=v("a-type");A.montant=v("a-mt");A.freq=v("a-fq");A.grp=v("a-grp")??A.grp;A.objectif=v("a-obj")??A.objectif;A.part=v("a-part")??A.part}
 function readSettings(){document.querySelectorAll(".set").forEach(el=>{const p=P(el.dataset.id);if(!p)return;el.querySelectorAll("[data-k]").forEach(i=>{const k=i.dataset.k;p[k]=k==="nom"||k==="freq"?i.value:parseAr(i.value)})})}
-const cfgNow=()=>({postes:S.postes,groupes:S.groupes,couleurs:S.couleurs});
+const cfgNow=()=>({postes:S.postes,groupes:S.groupes,couleurs:S.couleurs,periodes:S.periodes});
 function csv(){const all=[...L.tx].sort((a,b)=>a.date.localeCompare(b.date));
  return"Date\tPoste\tDescription\tMontant\n"+all.map(t=>{const[y,m,d]=t.date.split("-");return[`${d}/${m}/${y}`,P(t.poste)?.nom||"Poste supprimé",(t.note||"").replace(/\s+/g," "),t.montant].join("\t")}).join("\n")}
 
@@ -418,9 +480,15 @@ app.addEventListener("click",async e=>{
  if(el.id==="save"){e.preventDefault();const m=parseAr(document.getElementById("mt").value),d=document.getElementById("dt").value||today(),n=document.getElementById("nt").value.trim();
   if(m<=0){toast("Saisis un montant positif.");return}
   el.disabled=true;const t=await addTx(S.form.poste,m,d,n);S.form={type:S.form.type,poste:null,date:today()};if(t.mois!==S.mois){S.mois=t.mois;store.emit()}location.hash="accueil";toast(`${ar(m)} noté : ${P(t.poste).nom}`,()=>store.del(t.id));return}
- if(el.dataset.del){const t=S.tx.find(x=>x.id===el.dataset.del);if(!t)return;await store.del(t.id);toast("Ligne supprimée",()=>store.add({...t,id:uid(),ts:Date.now()}));return}
+ if(el.dataset.per){S.perEdit=true;S.perForm=null;render();return}
+ if(el.dataset.perno){S.perEdit=false;S.perForm=null;render();return}
+ if(el.dataset.perdel){const m=S.mois,old=S.periodes[m];delete S.periodes[m];S.perEdit=false;S.perForm=null;await store.saveConfig(cfgNow());store.emit();
+  toast(`${moisLabel(m)} : retour au mois calendaire`,async()=>{S.periodes[m]=old;await store.saveConfig(cfgNow());store.emit()});return}
+ if(el.id==="persave"){relogIfNeeded();savePeriode();return}
+ if(el.id==="debl"){ouvrirDeblocage();return}
+ if(el.dataset.del){const t=L.tx.find(x=>x.id===el.dataset.del);if(!t)return;await store.del(t.id);toast("Ligne supprimée",()=>store.add({...t,id:uid(),ts:Date.now()}));return}
  if(el.id==="virer"){const b=bilan(),ps=poches();if(b.reste<=0)return;
-  const d=S.mois===today().slice(0,7)?today():(()=>{const[y,m]=S.mois.split("-").map(Number);return S.mois+"-"+pad(new Date(y,m,0).getDate())})();
+  const pr=periode(S.mois),tj=today(),d=tj<pr.d?pr.d:tj>pr.f?pr.f:tj;
   const sh=document.createElement("div");sh.className="sheet";sh.innerHTML=`<div class="p" role="dialog" aria-label="Virer le surplus"><h2 style="margin-top:0">Virer ${ar(b.reste)} sur l'épargne</h2>${ps.map(p=>`<div class="tx nodel"><span>${esc(p.nom)}</span><b class="m">${ar(Math.round(b.reste*(+p.part||0)/100))}</b></div>`).join("")}<p class="mute">Fais d'abord les virements, puis confirme : ils seront notés au ${esc(d.split("-").reverse().join("/"))}.</p><button class="btn" data-ok>C'est fait, je confirme</button><button class="btn ghost" data-no>Pas encore</button></div>`;
   document.body.append(sh);sh.addEventListener("click",async ev=>{if(ev.target===sh||ev.target.closest("[data-no]"))sh.remove();if(ev.target.closest("[data-ok]")){relogIfNeeded();sh.remove();let left=b.reste;for(const[i,p]of ps.entries()){const v=i===ps.length-1?left:Math.round(b.reste*(+p.part||0)/100);left-=v;if(v>0)await addTx(p.id,v,d,"Surplus du mois")}toast("Surplus versé sur tes poches")}});return}
  if(el.dataset.rm){readSettings();readAdd();const p=P(el.dataset.rm);S.postes=S.postes.filter(x=>x.id!==p.id);render();toast(`« ${p.nom} » retiré (enregistre pour valider)`,()=>{S.postes.push(p);render()});return}
@@ -436,9 +504,71 @@ app.addEventListener("click",async e=>{
 });
 app.addEventListener("submit",e=>e.preventDefault());
 // formatage en direct des montants pendant la saisie, sans faire sauter le curseur
-app.addEventListener("input",e=>{const i=e.target;if(!i.matches||!i.matches("input[inputmode=numeric]"))return;
+function fmtInput(e){const i=e.target;if(!i.matches||!i.matches("input[inputmode=numeric]"))return;
  const pos=i.selectionStart??i.value.length,avant=i.value.slice(0,pos).replace(/\D/g,"").length,v=fi(i.value);if(v===i.value)return;
- i.value=v;let n=0,k=0;while(k<v.length&&n<avant){if(/\d/.test(v[k]))n++;k++}try{i.setSelectionRange(k,k)}catch(err){}});
+ i.value=v;let n=0,k=0;while(k<v.length&&n<avant){if(/\d/.test(v[k]))n++;k++}try{i.setSelectionRange(k,k)}catch(err){}}
+app.addEventListener("input",fmtInput);
+
+/* ---- période de paie : enregistrement ---- */
+async function savePeriode(){
+ const m=S.mois,d=document.getElementById("pd").value,f=document.getElementById("pf").value;
+ if(!d||!f){toast("Choisis les deux dates.");return}
+ if(f<d){toast("La fin doit être après le début.");return}
+ if(addJ(d,62)<f){toast("Période trop longue (2 mois maximum).");return}
+ const P2={...S.periodes,[m]:{d,f}},msg=[];
+ // les mois voisins déjà datés se recollent automatiquement (pas de trou, pas de chevauchement)
+ const mp=moisDec(m,-1),mn=moisDec(m,1);
+ if(P2[mp]&&P2[mp].f!==addJ(d,-1)){P2[mp]={...P2[mp],f:addJ(d,-1)};msg.push(`${MOIS[+mp.slice(5)-1]} finit le ${fd(P2[mp].f)}`)}
+ if(P2[mn]&&P2[mn].d!==addJ(f,1)){P2[mn]={...P2[mn],d:addJ(f,1)};msg.push(`${MOIS[+mn.slice(5)-1]} commence le ${fd(P2[mn].d)}`)}
+ for(const k of[mp,mn])if(P2[k]&&P2[k].f<P2[k].d){toast(`Ces dates écraseraient toute la période de ${moisLabel(k)}.`);return}
+ const autre=Object.entries(P2).find(([k,p])=>k!==m&&k!==mp&&k!==mn&&p.d<=f&&p.f>=d);
+ if(autre){toast(`Ces dates chevauchent la période de ${moisLabel(autre[0])}.`);return}
+ S.periodes=P2;S.perEdit=false;S.perForm=null;
+ await store.saveConfig(cfgNow());store.emit();
+ toast(`${moisLabel(m)} : du ${fd(d)} au ${fd(f)}${msg.length?" · "+msg.join(", "):""}`);
+}
+
+/* ---- déblocage de fonds d'épargne (exception) ---- */
+function ouvrirDeblocage(){
+ const ps=poches().filter(p=>solde(p)>0);if(!ps.length)return;
+ const F={poste:ps[0].id,motif:null};
+ const sh=document.createElement("div");sh.className="sheet";
+ const draw=()=>{
+  const p=P(F.poste),s=solde(p),o=+p.objectif||0;
+  const keep=id=>sh.querySelector("#"+id)?.value;
+  const mt=keep("db-m")??"",nt=keep("db-n")??"",dt=keep("db-d")||today(),chk=sh.querySelector("#db-b");
+  const compte=chk?chk.checked:false;
+  sh.innerHTML=`<div class="p" role="dialog" aria-modal="true" aria-label="Débloquer des fonds">
+  <h2 style="margin-top:0">Débloquer des fonds</h2>
+  <p class="mute" style="margin-top:-4px">Une exception : l'argent sort de la poche et le déblocage reste noté avec son motif.</p>
+  <label class="f">Poche<select id="db-p">${ps.map(x=>`<option value="${esc(x.id)}"${x.id===F.poste?" selected":""}>${esc(x.nom)} · ${ar(solde(x))}</option>`).join("")}</select></label>
+  <label class="f">Montant à débloquer (Ar)<input id="db-m" class="amount" inputmode="numeric" autocomplete="off" placeholder="0" value="${esc(mt)}"></label>
+  <div class="mute" style="margin-top:4px">Disponible : ${ar(s)}${F.motif==="Objectif atteint"&&o&&s<o?` · <span class="warn">objectif pas encore atteint (${Math.round(s/o*100)} %)</span>`:""}</div>
+  <div class="grp" style="font-weight:700;color:var(--ink)">Motif</div>
+  <div class="chips">${MOTIFS.map(k=>`<button type="button" class="chip${F.motif===k?" on":""}" style="--c:#e07b00" data-motif="${esc(k)}" aria-pressed="${F.motif===k}">${esc(k)}</button>`).join("")}</div>
+  <label class="f">${F.motif==="Objectif atteint"?"Précision (facultatif)":"Précise le motif (obligatoire)"}<input id="db-n" value="${esc(nt)}" placeholder="${F.motif==="Urgence"?"ex. hospitalisation, réparation…":"ex. achat de l'ordinateur"}"></label>
+  <label class="chk"><input type="checkbox" id="db-b"${compte?" checked":""}><span>Compter cet argent dans le reste du mois<small class="mute">Coche s'il sert à payer des dépenses que tu notes dans l'app (ex. urgence notée en imprévu). Décoche pour un achat hors budget.</small></span></label>
+  <label class="f">Date<input id="db-d" type="date" value="${esc(dt)}"></label>
+  <button class="btn" data-ok>Confirmer le déblocage</button><button class="btn ghost" data-no>Annuler</button></div>`;
+ };
+ draw();document.body.append(sh);
+ sh.addEventListener("input",fmtInput);
+ sh.addEventListener("change",e=>{if(e.target.id==="db-p"){F.poste=e.target.value;draw()}});
+ sh.addEventListener("click",async ev=>{
+  if(ev.target===sh||ev.target.closest("[data-no]")){sh.remove();return}
+  const mb=ev.target.closest("[data-motif]");
+  if(mb){F.motif=mb.dataset.motif;draw();const c=sh.querySelector("#db-b");c.checked=F.motif==="Urgence";return}
+  if(!ev.target.closest("[data-ok]"))return;
+  const p=P(F.poste),m=parseAr(sh.querySelector("#db-m").value),n=sh.querySelector("#db-n").value.trim(),d=sh.querySelector("#db-d").value||today(),compte=sh.querySelector("#db-b").checked;
+  if(m<=0){toast("Saisis le montant à débloquer.");return}
+  if(m>solde(p)){toast(`Il n'y a que ${ar(solde(p))} sur « ${p.nom} ».`);return}
+  if(!F.motif){toast("Choisis le motif du déblocage.");return}
+  if(F.motif!=="Objectif atteint"&&!n){toast("Précise le motif : c'est ce qui en fait une exception.");return}
+  relogIfNeeded();sh.remove();
+  const t={id:uid(),date:d,mois:moisDe(d),poste:p.id,type:"Déblocage",montant:m,motif:F.motif,hors:!compte,note:n,ts:Date.now()};
+  await store.add(t);toast(`${ar(m)} débloqué de « ${p.nom} »`,()=>store.del(t.id));
+ });
+}
 app.addEventListener("change",e=>{if(e.target.matches(".set select")||e.target.id==="a-type"||e.target.id==="a-fq"){readSettings();readAdd();render()}if(e.target.dataset.col){readSettings();readAdd();S.couleurs={...S.couleurs,[e.target.dataset.col]:e.target.value};render();toast("Couleur changée (enregistre pour la garder)")}});
 window.addEventListener("hashchange",route);
 route();boot();

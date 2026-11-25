@@ -114,6 +114,15 @@ input[type=color]{width:44px;height:36px;padding:2px;min-height:0;margin:0;borde
 .toast button{background:none;border:0;color:var(--yel);font:inherit;font-weight:800;cursor:pointer;min-height:36px;flex:none}
 .sheet{position:fixed;inset:0;background:#0008;display:flex;align-items:flex-end;justify-content:center;z-index:8}
 .sheet .p{background:var(--bg);width:100%;max-width:560px;border-radius:20px 20px 0 0;padding:20px 16px calc(env(safe-area-inset-bottom) + 20px);max-height:90vh;overflow:auto}
+/* période de paie et déblocages */
+.per{display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:6px 10px;font-size:14px;color:var(--mute);margin:-4px 0 12px}
+.per b{color:var(--ink)}
+.per button{flex:none;min-height:36px;border-radius:18px;border:1px solid var(--line);background:var(--bg);color:var(--ink);font:inherit;font-size:13px;font-weight:700;padding:4px 12px;cursor:pointer}
+.per-f{margin:0 0 14px}
+.excep{margin-top:12px;font-size:14px;padding:8px 10px;border-radius:10px;background:var(--bg);border-left:4px solid #e07b00;overflow-wrap:anywhere}
+.chk{display:flex;gap:10px;align-items:flex-start;margin-top:16px;font-size:15px;font-weight:700;cursor:pointer}
+.chk input{width:22px;height:22px;min-height:0;margin:2px 0 0;padding:0;flex:none;accent-color:#e07b00}
+.chk small{display:block;font-weight:400;font-size:13px;margin-top:2px}
 .empty{text-align:center;padding:40px 10px;color:var(--mute)}
 @media (prefers-reduced-motion:no-preference){.bar i{transition:width .5s ease}}
 </style>
