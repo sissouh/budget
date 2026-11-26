@@ -427,12 +427,18 @@ function vHisto(){
  return`<div class="top"><button class="iconbtn" data-m="-1" aria-label="Mois précédent">‹</button><h1>${moisLabel(S.mois)}</h1><button class="iconbtn" data-m="1" aria-label="Mois suivant">›</button></div>${vPeriode()}${rows||`<div class="empty">Rien de noté ce mois-ci.<br>Appuie sur le + jaune pour commencer.</div>`}`;
 }
 const segEp=()=>`<div class="seg two" role="tablist">${[["epargne","Épargne"],["invest","Investissements"]].map(([k,l])=>`<button type="button" role="tab" aria-selected="${S.epv===k}" data-epv="${k}" class="${S.epv===k?"on":""}">${l}</button>`).join("")}</div>`;
+// patrimoine : tout l'argent mis de côté = poches d'épargne + capital encore placé dans les investissements
+function vTotal(){
+ const e=poches().reduce((a,p)=>a+solde(p),0),i=placements().reduce((a,p)=>a+invest(p).encours,0);
+ return`<div class="alloc" style="margin:0 0 14px"><div class="mute">Patrimoine total</div><div style="font-size:clamp(24px,8vw,30px);font-weight:800;line-height:1.15;overflow-wrap:anywhere">${ar(e+i)}</div>
+ <div class="legend" style="margin-top:6px"><span>${sw("Épargne")}Épargne ${ar(e)}</span><span><span class="sw" style="background:${INVC}"></span>Investi ${ar(i)}</span></div></div>`;
+}
 function vEpargne(){
- if(S.epv==="invest")return segEp()+vInvest();
+ if(S.epv==="invest")return segEp()+vTotal()+vInvest();
  const ps=poches(),tot=ps.reduce((a,p)=>a+solde(p),0),obj=ps.reduce((a,p)=>a+(+p.objectif||0),0);
  const cards=ps.map(p=>{const s=solde(p),o=+p.objectif||0,pct=o?Math.min(100,Math.max(0,s)/o*100):0,db=debloque(p);
   return`<div class="card"><div class="l"><b>${esc(p.nom)}</b><span class="mute">${Math.round(pct)} %</span></div><div class="big">${ar(s)}</div><div class="bar"><i style="width:${pct}%;background:${esc(col("Épargne"))}"></i></div><div class="mute" style="margin-top:8px">Objectif ${ar(o)} · reste ${ar(Math.max(0,o-s))}<br>${ar(mensuel(p))}/mois · ${+p.part||0} % du surplus${db?`<br>Déjà débloqué : ${ar(db)}`:""}</div></div>`}).join("");
- return`${segEp()}<h1>Mon épargne</h1><p class="mute">On y met, on n'y touche plus. Seule sortie possible : un déblocage exceptionnel et justifié, en bas de page.</p>
+ return`${segEp()}${vTotal()}<h1>Mon épargne</h1><p class="mute">On y met, on n'y touche plus. Seule sortie possible : un déblocage exceptionnel et justifié, en bas de page.</p>
  <div class="card dark"><div>Total épargné</div><div class="big">${ar(tot)}</div><div style="opacity:.7;font-size:14px">sur un objectif de ${ar(obj)}</div></div>${cards}${histoEp()}${vDeblocages()}`;
 }
 // déblocages de fonds : hors des saisies ordinaires, une exception avec un motif
